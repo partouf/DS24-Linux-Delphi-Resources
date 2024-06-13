@@ -1,0 +1,110 @@
+name: APP Build
+
+on: [push]
+
+jobs:
+    build_app:
+      runs-on: windows-2019
+
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
+        - name: Cache Compiler
+          id: cache-dcc
+          uses: actions/cache@v4
+          env:
+            cache-name: cache-node-modules
+          with:
+            path: C:/dcc
+            key: dcc
+        - if: ${{ steps.cache-dcc.outputs.cache-hit != 'true' }}
+          name: Install Compiler
+          shell: pwsh
+          run: |
+            $InstallDir = "C:/dcc"
+            New-Item -Path "/tmp" -ItemType Directory
+            New-Item -Path "$InstallDir/SDKs" -ItemType Directory
+
+            function DownloadFromFTP  {
+                Param
+                (
+                    [System.Net.FtpWebRequest] $FTPRequest,
+                    [string] $Destination
+                )
+                $FTPRequest.Method = [System.Net.WebRequestMethods+Ftp]::DownloadFile
+                $FTPRequest.UseBinary = $true
+                $FTPRequest.KeepAlive = $false
+                $FTPResponse = $FTPRequest.GetResponse()
+                $ResponseStream = $FTPResponse.GetResponseStream()
+                $LocalFile = New-Object IO.FileStream($Destination, [IO.FileMode]::Create)
+                [byte[]] $ReadBuffer = New-Object byte[] 4096
+                do {
+                    $ReadLength = $ResponseStream.Read($ReadBuffer, 0, 4096)
+                    $LocalFile.Write($ReadBuffer, 0, $ReadLength)
+                } while ($ReadLength -ne 0)
+                $LocalFile.Close()
+            }
+
+            $FTPRequestDcc = [System.Net.FtpWebRequest]::Create("ftp://${{ secrets.COMPILERSFTPSERVER }}/21.0.zip")
+            $FTPRequestDcc.Credentials = New-Object System.Net.NetworkCredential("${{ secrets.COMPILERSFTPUSER }}", "${{ secrets.COMPILERSFTPPWD }}")
+            DownloadFromFTP -FTPRequest $FTPRequestDcc -Destination "/tmp/21.0.zip"
+
+            $FTPRequestSdk = [System.Net.FtpWebRequest]::Create("ftp://${{ secrets.COMPILERSFTPSERVER }}/ubuntu22.04.sdk.zip")
+            $FTPRequestSdk.Credentials = New-Object System.Net.NetworkCredential("${{ secrets.COMPILERSFTPUSER }}", "${{ secrets.COMPILERSFTPPWD }}")
+            DownloadFromFTP -FTPRequest $FTPRequestSdk -Destination "/tmp/ubuntu22.04.sdk.zip"
+
+            Expand-Archive -Path "/tmp/21.0.zip" -DestinationPath $InstallDir
+            Remove-Item -Path "/tmp/21.0.zip"
+
+            Expand-Archive -Path "/tmp/ubuntu22.04.sdk.zip" -DestinationPath "$InstallDir/SDKs"
+            Remove-Item -Path "/tmp/ubuntu22.04.sdk.zip"
+        - name: Build App
+          run: |
+            cd app
+            pwsh -File save-version.ps1 -RepoDirMain .
+            pwsh -File clone-dependencies.ps1
+            pwsh -File build-app.ps1
+        - uses: actions/upload-artifact@v4
+          name: Save Artifact
+          with:
+            name: ds24_app
+            path: D:\a\DS24-Linux-Delphi-Resources\DS24-Linux-Delphi-Resources\app\ds24_app
+
+    docker_build:
+      needs: [build_app]
+      runs-on: ubuntu-22.04
+      
+      steps:
+        - name: Checkout repository
+          uses: actions/checkout@v4
+          with:
+            fetch-depth: 0
+        - name: Dependencies
+          run: |
+            sudo azure-restart-app/install-requirements.sh
+        - name: Download the built app
+          uses: actions/download-artifact@v4
+          with:
+            name: ds24_app
+            path: container-app-docker
+        - name: Build and push to Docker Hub
+          run: |
+            cd container-app-docker
+            chmod +x ds24_app
+            docker login -u ds24containerreg -p ${{ secrets.AZREG_PASSWORD }} ds24containerreg.azurecr.io
+            docker build -t ds24containerreg.azurecr.io/ds24-app-docker:latest .
+            docker push ds24containerreg.azurecr.io/ds24-app-docker:latest
+        - name: Restart Container
+          run: |
+            cd azure-restart-app
+            export PUBLIC_URL=${{ secrets.PUBLICURL }}
+            export REVISION=${{ secrets.AZURE_REVISION }}
+            export AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+            export AZURE_APP_ID=${{ secrets.AZURE_APP_ID }}
+            export AZURE_PASSWORD=${{ secrets.AZURE_PASSWORD }}
+            ./restart-app.sh
+        - name: Test API
+          run: |
+            cd api-test
+            export PUBLIC_URL=${{ secrets.PUBLICURL }}
+            ./do-test.sh
