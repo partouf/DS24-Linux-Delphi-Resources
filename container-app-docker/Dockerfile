@@ -50,7 +50,7 @@ ENV MSSQL_SERVER=ds24-mssql.database.windows.net,1433
 ENV MSSQL_DB=ds24-mssql-db
 ENV MSSQL_USERNAME=ds24admin
 # Important: quotes around pwd
-ENV MSSQL_PASSWORD="nb#E\OSj[9O/mck1,"
+# ENV MSSQL_PASSWORD="nb#E\OSj[9O/mck1,"
 
 # You can use tsql to test the settings
 # RUN tsql -S ${MSSQL_SERVER} -U ${MSSQL_USERNAME} -P ${MSSQL_PASSWORD}
