@@ -12,6 +12,7 @@ resource "azurerm_mssql_server" "ds24mssql" {
   administrator_login_password = local.mssql_db_admin_password
 }
 
+# note: this opens up mssql for all of Azure, not just your account - so don't share the DB details + password like I have here
 resource "azurerm_mssql_firewall_rule" "ds24mssqlfw" {
   name             = "AllowAllWindowsAzureIps"
   server_id        = azurerm_mssql_server.ds24mssql.id
